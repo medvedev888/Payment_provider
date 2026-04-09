@@ -1,6 +1,5 @@
 package me.vladislav.payment_provider.model;
 
-import me.vladislav.payment_provider.model.BankPaymentStatus;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -53,4 +52,6 @@ public class BankPayment {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
+    @Column(name = "retry_count", nullable = false)
+    private Integer retryCount = 0;
 }

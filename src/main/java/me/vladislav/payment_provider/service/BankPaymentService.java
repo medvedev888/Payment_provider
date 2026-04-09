@@ -30,6 +30,9 @@ public class BankPaymentService {
     @Value("${app.payment.base-url}")
     private String baseUrl;
 
+    @Value("${app.payment.max-retries:3}")
+    private int maxRetries;
+
     @Transactional
     public CreateBankPaymentResponse createPayment(CreateBankPaymentRequest request) {
         String providerPaymentId = "bank-pay-" + UUID.randomUUID();
@@ -64,12 +67,18 @@ public class BankPaymentService {
         BankPayment payment = bankPaymentRepository.findByProviderPaymentId(providerPaymentId)
                 .orElseThrow(() -> new NotFoundException("Payment not found: " + providerPaymentId));
 
-        if (payment.getStatus() != BankPaymentStatus.CREATED) {
-            throw new BusinessException("Payment already completed with status: " + payment.getStatus());
+        if (payment.getStatus() == BankPaymentStatus.PAID) {
+            log.warn("Payment {} already PAID", providerPaymentId);
+            return;
+        }
+        if (payment.getStatus() == BankPaymentStatus.FAILED) {
+            throw new BusinessException("Cannot mark as PAID because payment is already FAILED");
         }
 
         payment.setStatus(BankPaymentStatus.PAID);
         payment.setCompletedAt(LocalDateTime.now());
+        payment.setUpdatedAt(LocalDateTime.now());
+        payment.setRetryCount(0);
         bankPaymentRepository.save(payment);
 
         CallbackRequest callback = new CallbackRequest(
@@ -87,13 +96,28 @@ public class BankPaymentService {
         BankPayment payment = bankPaymentRepository.findByProviderPaymentId(providerPaymentId)
                 .orElseThrow(() -> new NotFoundException("Payment not found: " + providerPaymentId));
 
-        if (payment.getStatus() != BankPaymentStatus.CREATED) {
-            throw new BusinessException("Payment already completed with status: " + payment.getStatus());
+        if (payment.getStatus() == BankPaymentStatus.PAID) {
+            throw new BusinessException("Payment already PAID");
+        }
+        if (payment.getStatus() == BankPaymentStatus.FAILED) {
+            log.warn("Payment {} already FAILED, ignoring additional fail call", providerPaymentId);
+            return;
+        }
+
+        int currentRetries = payment.getRetryCount();
+        if (currentRetries < maxRetries) {
+            payment.setRetryCount(currentRetries + 1);
+            payment.setUpdatedAt(LocalDateTime.now());
+            bankPaymentRepository.save(payment);
+            log.info("Payment {} failed attempt {}/{}, retryCount incremented, no callback sent",
+                    providerPaymentId, payment.getRetryCount(), maxRetries);
+            return;
         }
 
         payment.setStatus(BankPaymentStatus.FAILED);
         payment.setFailureReason(failureReason);
         payment.setCompletedAt(LocalDateTime.now());
+        payment.setUpdatedAt(LocalDateTime.now());
         bankPaymentRepository.save(payment);
 
         CallbackRequest callback = new CallbackRequest(
@@ -102,8 +126,7 @@ public class BankPaymentService {
                 failureReason
         );
         callbackService.sendPaymentResult(payment.getCallbackUrl(), callback);
-        log.info("Payment {} marked as FAILED, reason: {}, callback sent",
-                providerPaymentId, failureReason);
+        log.info("Payment {} final FAILED after {} retries, callback sent", providerPaymentId, maxRetries);
     }
 
 
@@ -119,6 +142,7 @@ public class BankPaymentService {
         response.setCreatedAt(payment.getCreatedAt());
         response.setUpdatedAt(payment.getUpdatedAt());
         response.setCompletedAt(payment.getCompletedAt());
+        response.setRetryCount(payment.getRetryCount());
         return response;
     }
 

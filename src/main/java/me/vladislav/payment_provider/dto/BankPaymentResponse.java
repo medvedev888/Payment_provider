@@ -17,4 +17,5 @@ public class BankPaymentResponse {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime completedAt;
+    private Integer retryCount;
 }
