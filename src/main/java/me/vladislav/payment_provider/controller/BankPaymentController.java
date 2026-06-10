@@ -18,11 +18,6 @@ public class BankPaymentController {
 
     private final BankPaymentService bankPaymentService;
 
-    @PostMapping
-    public ResponseEntity<CreateBankPaymentResponse> createPayment(@Valid @RequestBody CreateBankPaymentRequest request) {
-        CreateBankPaymentResponse response = bankPaymentService.createPayment(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
-    }
 
     @GetMapping("/{providerPaymentId}")
     public ResponseEntity<BankPaymentResponse> getPayment(@PathVariable String providerPaymentId) {

@@ -15,6 +15,15 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+kafka:
+  bootstrap-servers: localhost:9092
+  topics:
+    payment-create-requested: payment.create.requested
+    payment-created: payment.created
+    payment-status-changed: payment.status.changed
+  consumer:
+    group-id: payment-provider-group
+
 app:
   payment:
     base-url: http://localhost:1489

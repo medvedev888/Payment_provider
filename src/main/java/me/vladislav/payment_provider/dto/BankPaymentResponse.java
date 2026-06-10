@@ -12,7 +12,6 @@ public class BankPaymentResponse {
     private BigDecimal amount;
     private String currency;
     private BankPaymentStatus status;
-    private String callbackUrl;
     private String failureReason;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

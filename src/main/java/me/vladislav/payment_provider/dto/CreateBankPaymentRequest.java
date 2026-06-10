@@ -17,7 +17,4 @@ public class CreateBankPaymentRequest {
 
     @NotNull(message = "currency must not be null")
     private String currency;
-
-    @NotNull(message = "callbackUrl must not be null")
-    private String callbackUrl;
 }

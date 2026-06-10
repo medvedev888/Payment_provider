@@ -35,9 +35,6 @@ public class BankPayment {
     @Column(name = "status", nullable = false, length = 32)
     private BankPaymentStatus status;
 
-    @Column(name = "callback_url", nullable = false)
-    private String callbackUrl;
-
     @Column(name = "failure_reason")
     private String failureReason;
 

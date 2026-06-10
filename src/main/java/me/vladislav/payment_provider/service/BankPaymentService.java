@@ -2,13 +2,14 @@ package me.vladislav.payment_provider.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
 import me.vladislav.payment_provider.dto.BankPaymentResponse;
-import me.vladislav.payment_provider.dto.CallbackRequest;
-import me.vladislav.payment_provider.dto.CreateBankPaymentRequest;
 import me.vladislav.payment_provider.dto.CreateBankPaymentResponse;
 import me.vladislav.payment_provider.exception.BusinessException;
 import me.vladislav.payment_provider.exception.NotFoundException;
+import me.vladislav.payment_provider.integration.kafka.KafkaPaymentEventProducer;
+import me.vladislav.payment_provider.integration.kafka.event.PaymentCreateRequestedEvent;
+import me.vladislav.payment_provider.integration.kafka.event.PaymentCreatedEvent;
+import me.vladislav.payment_provider.integration.kafka.event.PaymentStatusChangedEvent;
 import me.vladislav.payment_provider.model.BankPayment;
 import me.vladislav.payment_provider.model.BankPaymentStatus;
 import me.vladislav.payment_provider.repository.BankPaymentRepository;
@@ -23,9 +24,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class BankPaymentService {
-
     private final BankPaymentRepository bankPaymentRepository;
-    private final CallbackService callbackService;
+    private final KafkaPaymentEventProducer kafkaPaymentEventProducer;
 
     @Value("${app.payment.base-url}")
     private String baseUrl;
@@ -34,20 +34,27 @@ public class BankPaymentService {
     private int maxRetries;
 
     @Transactional
-    public CreateBankPaymentResponse createPayment(CreateBankPaymentRequest request) {
+    public CreateBankPaymentResponse createPayment(PaymentCreateRequestedEvent event) {
         String providerPaymentId = "bank-pay-" + UUID.randomUUID();
 
         BankPayment payment = new BankPayment();
         payment.setProviderPaymentId(providerPaymentId);
-        payment.setEnrollmentId(request.getEnrollmentId());
-        payment.setAmount(request.getAmount());
-        payment.setCurrency(request.getCurrency().toUpperCase());
+        payment.setEnrollmentId(event.enrollmentId());
+        payment.setAmount(event.amount());
+        payment.setCurrency(event.currency().toUpperCase());
         payment.setStatus(BankPaymentStatus.CREATED);
-        payment.setCallbackUrl(request.getCallbackUrl());
 
         bankPaymentRepository.save(payment);
 
         String paymentUrl = baseUrl + "/api/bank/payments/" + providerPaymentId;
+
+        PaymentCreatedEvent paymentCreatedEvent = new PaymentCreatedEvent(
+                event.paymentId(),
+                providerPaymentId,
+                paymentUrl
+        );
+
+        kafkaPaymentEventProducer.sendPaymentCreated(paymentCreatedEvent);
 
         log.info("Created payment with providerPaymentId: {}", providerPaymentId);
         return new CreateBankPaymentResponse(providerPaymentId, paymentUrl);
@@ -81,13 +88,15 @@ public class BankPaymentService {
         payment.setRetryCount(0);
         bankPaymentRepository.save(payment);
 
-        CallbackRequest callback = new CallbackRequest(
+        PaymentStatusChangedEvent paymentStatusChangedEvent = new PaymentStatusChangedEvent(
                 providerPaymentId,
-                BankPaymentStatus.PAID,
+                BankPaymentStatus.PAID.name(),
                 null
         );
-        callbackService.sendPaymentResult(payment.getCallbackUrl(), callback);
-        log.info("Payment {} marked as PAID, callback sent", providerPaymentId);
+
+        kafkaPaymentEventProducer.sendPaymentStatusChanged(paymentStatusChangedEvent);
+
+        log.info("Payment {} marked as PAID", providerPaymentId);
     }
 
 
@@ -109,7 +118,7 @@ public class BankPaymentService {
             payment.setRetryCount(currentRetries + 1);
             payment.setUpdatedAt(LocalDateTime.now());
             bankPaymentRepository.save(payment);
-            log.info("Payment {} failed attempt {}/{}, retryCount incremented, no callback sent",
+            log.info("Payment {} failed attempt {}/{}, retryCount incremented",
                     providerPaymentId, payment.getRetryCount(), maxRetries);
             return;
         }
@@ -120,13 +129,15 @@ public class BankPaymentService {
         payment.setUpdatedAt(LocalDateTime.now());
         bankPaymentRepository.save(payment);
 
-        CallbackRequest callback = new CallbackRequest(
+        PaymentStatusChangedEvent paymentStatusChangedEvent = new PaymentStatusChangedEvent(
                 providerPaymentId,
-                BankPaymentStatus.FAILED,
+                BankPaymentStatus.FAILED.name(),
                 failureReason
         );
-        callbackService.sendPaymentResult(payment.getCallbackUrl(), callback);
-        log.info("Payment {} final FAILED after {} retries, callback sent", providerPaymentId, maxRetries);
+
+        kafkaPaymentEventProducer.sendPaymentStatusChanged(paymentStatusChangedEvent);
+
+        log.info("Payment {} final FAILED after {} retries", providerPaymentId, maxRetries);
     }
 
 
@@ -137,7 +148,6 @@ public class BankPaymentService {
         response.setAmount(payment.getAmount());
         response.setCurrency(payment.getCurrency());
         response.setStatus(payment.getStatus());
-        response.setCallbackUrl(payment.getCallbackUrl());
         response.setFailureReason(payment.getFailureReason());
         response.setCreatedAt(payment.getCreatedAt());
         response.setUpdatedAt(payment.getUpdatedAt());
